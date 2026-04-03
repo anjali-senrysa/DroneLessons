@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import Script from 'next/script';
 
 declare global {
   interface Window { Razorpay: any; }
@@ -43,6 +42,21 @@ const WA_SVG = (
   </svg>
 );
 
+// Add this helper function above your component
+function loadRazorpay(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof window.Razorpay !== 'undefined') {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
 export default function HoverMethodPage() {
   const [bundle, setBundle] = useState<'a' | 'b'>('a');
   const [openFaq, setOpenFaq] = useState<number | null>(null);
@@ -57,6 +71,11 @@ export default function HoverMethodPage() {
   const sfPhone = useRef<HTMLInputElement>(null);
   const sfStudents = useRef<HTMLSelectElement>(null);
   const sfMsg = useRef<HTMLTextAreaElement>(null);
+  const [showPayForm, setShowPayForm] = useState(false);
+  const [pendingPayment, setPendingPayment] = useState<{ amt: number, desc: string } | null>(null);
+  const [payName, setPayName] = useState('');
+  const [payEmail, setPayEmail] = useState('');
+  const [payPhone, setPayPhone] = useState('');
 
   useEffect(() => {
     const s = () => { setNavShadow(window.scrollY > 40); setShowScroll(window.scrollY > 500); };
@@ -71,38 +90,98 @@ export default function HoverMethodPage() {
   const curName = bundle === 'a' ? 'Practical Camp' : 'CoE Experience';
   const curAddon = bundle === 'a' ? 1249 : 3249;
 
-  const pay = useCallback(async (amtRupees: number, desc: string) => {
+
+  const pay = useCallback(async (amtRupees: number, desc: string, customerName = '',
+    customerEmail = '',
+    customerPhone = '',) => {
     if (paying) return;
     setPaying(true);
     try {
+      // ✅ Ensure Razorpay script is loaded first
+      const loaded = await loadRazorpay();
+      if (!loaded) {
+        alert('Payment SDK failed to load. Please check your connection and try again.');
+        setPaying(false);
+        return;
+      }
+
       const res = await fetch('/api/razorpay/create-order', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount: amtRupees * 100 }),
       });
       const order = await res.json();
       if (!order.id) throw new Error(order.error || 'Order failed');
 
-      
       const rzp = new window.Razorpay({
         key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-        amount: order.amount, currency: 'INR',
-        name: 'HoverMethod Junior', description: desc, order_id: order.id,
+        amount: order.amount,
+        currency: 'INR',
+        name: 'HoverMethod Junior',
+        description: desc,
+        order_id: order.id,
+
+        prefill: {
+          name: customerName,
+          email: customerEmail,
+          contact: customerPhone,
+        },
+
+        config: {
+          display: {
+            blocks: {
+              upi: {
+                name: 'Pay via UPI',
+                instruments: [{ method: 'upi' }],
+              },
+              other: {
+                name: 'Other Methods',
+                instruments: [
+                  { method: 'card' },
+                  { method: 'netbanking' },
+                  { method: 'wallet' },
+                ],
+              },
+            },
+            sequence: ['block.upi', 'block.other'],
+            preferences: { show_default_blocks: false },
+          },
+        },
+
         handler: async (r: any) => {
           const v = await fetch('/api/razorpay/verify-payment', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(r),
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ...r,
+              customer_name: customerName,
+              customer_email: customerEmail,
+              amount: amtRupees,
+            }),
           });
           const result = await v.json();
           setPaying(false);
-          if (result.success) { setSuccess('🎉 Payment successful! You are enrolled. Check WhatsApp for batch details.'); setTimeout(() => setSuccess(''), 7000); }
-          else alert('Payment verification failed. Please contact us on WhatsApp.');
+          if (result.success) {
+            setSuccess('🎉 Payment successful! You are enrolled. Check WhatsApp for batch details.');
+            setTimeout(() => setSuccess(''), 7000);
+          } else {
+            alert('Payment verification failed. Please contact us on WhatsApp.');
+          }
         },
         theme: { color: '#f37538' },
         modal: { ondismiss: () => setPaying(false) },
       });
-      rzp.on('payment.failed', () => { alert('Payment failed. Please try again.'); setPaying(false); });
+
+      rzp.on('payment.failed', () => {
+        alert('Payment failed. Please try again.');
+        setPaying(false);
+      });
       rzp.open();
-    } catch (e: any) { alert('Something went wrong. Please try again or contact us on WhatsApp.'); setPaying(false); }
+
+    } catch (e: any) {
+      alert('Something went wrong: ' + e.message);
+      setPaying(false);
+    }
   }, [paying]);
 
   const submitSchool = () => {
@@ -119,7 +198,6 @@ export default function HoverMethodPage() {
 
   return (
     <>
-      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" />
       {success && <div className="pay-success-banner">{success}</div>}
 
       {/* ANNOUNCE BAR */}
@@ -239,15 +317,15 @@ export default function HoverMethodPage() {
             <div className="about-visual">
               <svg width="100%" viewBox="0 0 680 900" xmlns="http://www.w3.org/2000/svg">
                 <defs>
-                  <radialGradient id="bg2" cx="50%" cy="45%" r="65%"><stop offset="0%" stopColor="#0d2645"/><stop offset="100%" stopColor="#05090f"/></radialGradient>
-                  <radialGradient id="cg2" cx="50%" cy="50%" r="50%"><stop offset="0%" stopColor="#1a6bb5" stopOpacity="0.4"/><stop offset="100%" stopColor="#0a2a4a" stopOpacity="0"/></radialGradient>
-                  <linearGradient id="db2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2a5fa8"/><stop offset="100%" stopColor="#112b56"/></linearGradient>
-                  <linearGradient id="ag2" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#1c4a8a"/><stop offset="100%" stopColor="#0e2444"/></linearGradient>
-                  <linearGradient id="af2" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stopColor="#29d4ff"/><stop offset="100%" stopColor="#3be08a"/></linearGradient>
-                  <linearGradient id="sf2" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stopColor="#29d4ff"/><stop offset="100%" stopColor="#1a90cc"/></linearGradient>
-                  <linearGradient id="bf2" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#3be08a"/><stop offset="100%" stopColor="#1ab567"/></linearGradient>
-                  <linearGradient id="hl2" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#29d4ff" stopOpacity="0"/><stop offset="50%" stopColor="#29d4ff" stopOpacity="0.7"/><stop offset="100%" stopColor="#29d4ff" stopOpacity="0"/></linearGradient>
-                  <clipPath id="sc2"><rect x="240" y="612" width="200" height="148"/></clipPath>
+                  <radialGradient id="bg2" cx="50%" cy="45%" r="65%"><stop offset="0%" stopColor="#0d2645" /><stop offset="100%" stopColor="#05090f" /></radialGradient>
+                  <radialGradient id="cg2" cx="50%" cy="50%" r="50%"><stop offset="0%" stopColor="#1a6bb5" stopOpacity="0.4" /><stop offset="100%" stopColor="#0a2a4a" stopOpacity="0" /></radialGradient>
+                  <linearGradient id="db2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2a5fa8" /><stop offset="100%" stopColor="#112b56" /></linearGradient>
+                  <linearGradient id="ag2" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#1c4a8a" /><stop offset="100%" stopColor="#0e2444" /></linearGradient>
+                  <linearGradient id="af2" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stopColor="#29d4ff" /><stop offset="100%" stopColor="#3be08a" /></linearGradient>
+                  <linearGradient id="sf2" x1="0" y1="1" x2="0" y2="0"><stop offset="0%" stopColor="#29d4ff" /><stop offset="100%" stopColor="#1a90cc" /></linearGradient>
+                  <linearGradient id="bf2" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#3be08a" /><stop offset="100%" stopColor="#1ab567" /></linearGradient>
+                  <linearGradient id="hl2" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#29d4ff" stopOpacity="0" /><stop offset="50%" stopColor="#29d4ff" stopOpacity="0.7" /><stop offset="100%" stopColor="#29d4ff" stopOpacity="0" /></linearGradient>
+                  <clipPath id="sc2"><rect x="240" y="612" width="200" height="148" /></clipPath>
                   <style>{`
                     @keyframes pS{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
                     @keyframes dH{0%,100%{transform:translateY(0px)}50%{transform:translateY(-6px)}}
@@ -274,47 +352,47 @@ export default function HoverMethodPage() {
                     .pd2{stroke-dasharray:200;animation:pD 2.5s ease-out forwards .5s;stroke-dashoffset:200}
                   `}</style>
                 </defs>
-                <rect width="680" height="900" fill="url(#bg2)" rx="16"/>
-                <ellipse cx="340" cy="430" rx="200" ry="180" fill="url(#cg2)"/>
-                <circle className="pr1" cx="340" cy="430" r="30" fill="none" stroke="#29d4ff" strokeWidth="1.2" opacity="0.6"/>
-                <circle className="pr2" cx="340" cy="430" r="30" fill="none" stroke="#29d4ff" strokeWidth="1" opacity="0.5"/>
+                <rect width="680" height="900" fill="url(#bg2)" rx="16" />
+                <ellipse cx="340" cy="430" rx="200" ry="180" fill="url(#cg2)" />
+                <circle className="pr1" cx="340" cy="430" r="30" fill="none" stroke="#29d4ff" strokeWidth="1.2" opacity="0.6" />
+                <circle className="pr2" cx="340" cy="430" r="30" fill="none" stroke="#29d4ff" strokeWidth="1" opacity="0.5" />
                 {/* DRONE GROUP */}
                 <g className="dg2">
-                  <rect x="205" y="330" width="118" height="10" rx="5" fill="url(#ag2)" transform="rotate(-42 263 335)"/>
-                  <rect x="357" y="330" width="118" height="10" rx="5" fill="url(#ag2)" transform="rotate(42 417 335)"/>
-                  <rect x="205" y="490" width="118" height="10" rx="5" fill="url(#ag2)" transform="rotate(42 263 495)"/>
-                  <rect x="357" y="490" width="118" height="10" rx="5" fill="url(#ag2)" transform="rotate(-42 417 495)"/>
-                  <circle cx="220" cy="330" r="22" fill="#0e2444" stroke="#1c5299" strokeWidth="1.5"/>
-                  <circle cx="460" cy="330" r="22" fill="#0e2444" stroke="#1c5299" strokeWidth="1.5"/>
-                  <circle cx="220" cy="530" r="22" fill="#0e2444" stroke="#1c5299" strokeWidth="1.5"/>
-                  <circle cx="460" cy="530" r="22" fill="#0e2444" stroke="#1c5299" strokeWidth="1.5"/>
-                  <g className="ptl2"><ellipse cx="220" cy="330" rx="54" ry="6" fill="#1a4a8a" opacity="0.5"/><ellipse cx="220" cy="330" rx="54" ry="6" fill="#1a4a8a" opacity="0.4" transform="rotate(90 220 330)"/></g>
-                  <g className="ptr2"><ellipse cx="460" cy="330" rx="54" ry="6" fill="#1a4a8a" opacity="0.5"/><ellipse cx="460" cy="330" rx="54" ry="6" fill="#1a4a8a" opacity="0.4" transform="rotate(90 460 330)"/></g>
-                  <g className="pbl2"><ellipse cx="220" cy="530" rx="54" ry="6" fill="#1a4a8a" opacity="0.5"/><ellipse cx="220" cy="530" rx="54" ry="6" fill="#1a4a8a" opacity="0.4" transform="rotate(90 220 530)"/></g>
-                  <g className="pbr2"><ellipse cx="460" cy="530" rx="54" ry="6" fill="#1a4a8a" opacity="0.5"/><ellipse cx="460" cy="530" rx="54" ry="6" fill="#1a4a8a" opacity="0.4" transform="rotate(90 460 530)"/></g>
-                  <rect x="294" y="394" width="92" height="72" rx="14" fill="url(#db2)" stroke="#2461a8" strokeWidth="1.5"/>
-                  <circle cx="340" cy="430" r="18" fill="#081420" stroke="#1a4a8a" strokeWidth="1.5"/>
-                  <circle cx="340" cy="430" r="11" fill="#0d1e35" stroke="#1e5799" strokeWidth="1"/>
-                  <circle cx="337" cy="427" r="2" fill="#29d4ff" opacity="0.6"/>
-                  <circle cx="302" cy="402" r="3.5" fill="#29d4ff" opacity="0.9"><animate attributeName="opacity" values="0.9;0.2;0.9" dur="1.2s" repeatCount="indefinite"/></circle>
-                  <circle cx="378" cy="402" r="3.5" fill="#29d4ff" opacity="0.9"><animate attributeName="opacity" values="0.9;0.2;0.9" dur="1.2s" begin="0.6s" repeatCount="indefinite"/></circle>
-                  <circle cx="302" cy="458" r="3.5" fill="#3be08a" opacity="0.9"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="2s" repeatCount="indefinite"/></circle>
-                  <circle cx="378" cy="458" r="3.5" fill="#3be08a" opacity="0.9"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="2s" begin="1s" repeatCount="indefinite"/></circle>
+                  <rect x="205" y="330" width="118" height="10" rx="5" fill="url(#ag2)" transform="rotate(-42 263 335)" />
+                  <rect x="357" y="330" width="118" height="10" rx="5" fill="url(#ag2)" transform="rotate(42 417 335)" />
+                  <rect x="205" y="490" width="118" height="10" rx="5" fill="url(#ag2)" transform="rotate(42 263 495)" />
+                  <rect x="357" y="490" width="118" height="10" rx="5" fill="url(#ag2)" transform="rotate(-42 417 495)" />
+                  <circle cx="220" cy="330" r="22" fill="#0e2444" stroke="#1c5299" strokeWidth="1.5" />
+                  <circle cx="460" cy="330" r="22" fill="#0e2444" stroke="#1c5299" strokeWidth="1.5" />
+                  <circle cx="220" cy="530" r="22" fill="#0e2444" stroke="#1c5299" strokeWidth="1.5" />
+                  <circle cx="460" cy="530" r="22" fill="#0e2444" stroke="#1c5299" strokeWidth="1.5" />
+                  <g className="ptl2"><ellipse cx="220" cy="330" rx="54" ry="6" fill="#1a4a8a" opacity="0.5" /><ellipse cx="220" cy="330" rx="54" ry="6" fill="#1a4a8a" opacity="0.4" transform="rotate(90 220 330)" /></g>
+                  <g className="ptr2"><ellipse cx="460" cy="330" rx="54" ry="6" fill="#1a4a8a" opacity="0.5" /><ellipse cx="460" cy="330" rx="54" ry="6" fill="#1a4a8a" opacity="0.4" transform="rotate(90 460 330)" /></g>
+                  <g className="pbl2"><ellipse cx="220" cy="530" rx="54" ry="6" fill="#1a4a8a" opacity="0.5" /><ellipse cx="220" cy="530" rx="54" ry="6" fill="#1a4a8a" opacity="0.4" transform="rotate(90 220 530)" /></g>
+                  <g className="pbr2"><ellipse cx="460" cy="530" rx="54" ry="6" fill="#1a4a8a" opacity="0.5" /><ellipse cx="460" cy="530" rx="54" ry="6" fill="#1a4a8a" opacity="0.4" transform="rotate(90 460 530)" /></g>
+                  <rect x="294" y="394" width="92" height="72" rx="14" fill="url(#db2)" stroke="#2461a8" strokeWidth="1.5" />
+                  <circle cx="340" cy="430" r="18" fill="#081420" stroke="#1a4a8a" strokeWidth="1.5" />
+                  <circle cx="340" cy="430" r="11" fill="#0d1e35" stroke="#1e5799" strokeWidth="1" />
+                  <circle cx="337" cy="427" r="2" fill="#29d4ff" opacity="0.6" />
+                  <circle cx="302" cy="402" r="3.5" fill="#29d4ff" opacity="0.9"><animate attributeName="opacity" values="0.9;0.2;0.9" dur="1.2s" repeatCount="indefinite" /></circle>
+                  <circle cx="378" cy="402" r="3.5" fill="#29d4ff" opacity="0.9"><animate attributeName="opacity" values="0.9;0.2;0.9" dur="1.2s" begin="0.6s" repeatCount="indefinite" /></circle>
+                  <circle cx="302" cy="458" r="3.5" fill="#3be08a" opacity="0.9"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="2s" repeatCount="indefinite" /></circle>
+                  <circle cx="378" cy="458" r="3.5" fill="#3be08a" opacity="0.9"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="2s" begin="1s" repeatCount="indefinite" /></circle>
                 </g>
                 {/* HUD */}
                 <g className="hp2" stroke="#29d4ff" strokeWidth="1" opacity="0.75">
-                  <line x1="308" y1="430" x2="326" y2="430"/><line x1="354" y1="430" x2="372" y2="430"/>
-                  <line x1="340" y1="406" x2="340" y2="420"/><line x1="340" y1="440" x2="340" y2="454"/>
+                  <line x1="308" y1="430" x2="326" y2="430" /><line x1="354" y1="430" x2="372" y2="430" />
+                  <line x1="340" y1="406" x2="340" y2="420" /><line x1="340" y1="440" x2="340" y2="454" />
                 </g>
                 <g stroke="#29d4ff" strokeWidth="1.5" fill="none" opacity="0.85">
-                  <path d="M272 378 L272 364 L288 364"/><path d="M408 378 L408 364 L392 364"/>
-                  <path d="M272 482 L272 496 L288 496"/><path d="M408 482 L408 496 L392 496"/>
+                  <path d="M272 378 L272 364 L288 364" /><path d="M408 378 L408 364 L392 364" />
+                  <path d="M272 482 L272 496 L288 496" /><path d="M408 482 L408 496 L392 496" />
                 </g>
-                <rect className="sl2" x="262" y="364" width="156" height="2" rx="1" fill="#29d4ff" opacity="0.7"/>
-                <rect x="80" y="429" width="520" height="1.5" rx="1" fill="url(#hl2)" opacity="0.45"><animate attributeName="opacity" values="0.45;0.7;0.45" dur="2s" repeatCount="indefinite"/></rect>
+                <rect className="sl2" x="262" y="364" width="156" height="2" rx="1" fill="#29d4ff" opacity="0.7" />
+                <rect x="80" y="429" width="520" height="1.5" rx="1" fill="url(#hl2)" opacity="0.45"><animate attributeName="opacity" values="0.45;0.7;0.45" dur="2s" repeatCount="indefinite" /></rect>
                 {/* TOP BAR */}
-                <rect x="40" y="38" width="600" height="54" rx="10" fill="#0a1e38" stroke="#1a3a60" strokeWidth="1" opacity="0.92"/>
-                <rect x="58" y="52" width="8" height="8" rx="2" fill="#3be08a"/>
+                <rect x="40" y="38" width="600" height="54" rx="10" fill="#0a1e38" stroke="#1a3a60" strokeWidth="1" opacity="0.92" />
+                <rect x="58" y="52" width="8" height="8" rx="2" fill="#3be08a" />
                 <text fontFamily="monospace" fontSize="11" fill="#3be08a" x="72" y="62">GPS LOCK</text>
                 <text fontFamily="monospace" fontSize="11" fill="#29d4ff" x="58" y="80" className="df2">28.6139° N  77.2090° E</text>
                 <text fontFamily="monospace" fontSize="13" fill="#29d4ff" x="340" y="60" textAnchor="middle" letterSpacing="3">HOVERMETHOD</text>
@@ -322,10 +400,10 @@ export default function HoverMethodPage() {
                 <text fontFamily="monospace" fontSize="11" fill="#aac8ef" x="622" y="62" textAnchor="end">MODE: AUTO</text>
                 <text fontFamily="monospace" fontSize="11" fill="#29d4ff" x="622" y="80" textAnchor="end" className="df2">SAT: 12 / HDOP: 0.8</text>
                 {/* LEFT PANEL */}
-                <rect x="40" y="120" width="140" height="270" rx="10" fill="#070f1e" stroke="#132840" strokeWidth="1" opacity="0.93"/>
+                <rect x="40" y="120" width="140" height="270" rx="10" fill="#070f1e" stroke="#132840" strokeWidth="1" opacity="0.93" />
                 <text fontFamily="monospace" fontSize="10" fill="#6a9dc8" x="110" y="142" textAnchor="middle" letterSpacing="1">ALTITUDE</text>
-                <rect x="62" y="155" width="18" height="110" rx="4" fill="#0d1e35" stroke="#1a3550" strokeWidth="0.5"/>
-                <rect x="62" y="190" width="18" height="75" rx="4" fill="url(#af2)" opacity="0.9"><animate attributeName="height" values="75;80;73;78;75" dur="4s" repeatCount="indefinite"/><animate attributeName="y" values="190;185;192;187;190" dur="4s" repeatCount="indefinite"/></rect>
+                <rect x="62" y="155" width="18" height="110" rx="4" fill="#0d1e35" stroke="#1a3550" strokeWidth="0.5" />
+                <rect x="62" y="190" width="18" height="75" rx="4" fill="url(#af2)" opacity="0.9"><animate attributeName="height" values="75;80;73;78;75" dur="4s" repeatCount="indefinite" /><animate attributeName="y" values="190;185;192;187;190" dur="4s" repeatCount="indefinite" /></rect>
                 <text fontFamily="monospace" fontSize="9" fill="#4a7aaa" x="86" y="162">120m</text>
                 <text fontFamily="monospace" fontSize="9" fill="#4a7aaa" x="86" y="188">90m</text>
                 <text fontFamily="monospace" fontSize="9" fill="#4a7aaa" x="86" y="215">60m</text>
@@ -337,76 +415,76 @@ export default function HoverMethodPage() {
                 <text fontFamily="monospace" fontSize="17" fill="#29d4ff" x="110" y="370" textAnchor="middle" className="df2">14.3</text>
                 <text fontFamily="monospace" fontSize="9" fill="#29d4ff" x="110" y="385" textAnchor="middle">m/s</text>
                 {/* RIGHT PANEL */}
-                <rect x="500" y="120" width="140" height="270" rx="10" fill="#070f1e" stroke="#132840" strokeWidth="1" opacity="0.93"/>
+                <rect x="500" y="120" width="140" height="270" rx="10" fill="#070f1e" stroke="#132840" strokeWidth="1" opacity="0.93" />
                 <text fontFamily="monospace" fontSize="10" fill="#6a9dc8" x="570" y="142" textAnchor="middle" letterSpacing="1">COMPASS</text>
-                <circle cx="570" cy="200" r="44" fill="#050d1a" stroke="#1a3a60" strokeWidth="0.8"/>
+                <circle cx="570" cy="200" r="44" fill="#050d1a" stroke="#1a3a60" strokeWidth="0.8" />
                 <text fontFamily="monospace" fontSize="10" fill="#29d4ff" x="570" y="162" textAnchor="middle">N</text>
                 <text fontFamily="monospace" fontSize="10" fill="#6a9dc8" x="614" y="205" textAnchor="middle">E</text>
                 <text fontFamily="monospace" fontSize="10" fill="#6a9dc8" x="570" y="248" textAnchor="middle">S</text>
                 <text fontFamily="monospace" fontSize="10" fill="#6a9dc8" x="526" y="205" textAnchor="middle">W</text>
                 <g className="nd2">
-                  <polygon points="570,163 565,200 570,195 575,200" fill="#29d4ff" opacity="0.9"/>
-                  <polygon points="570,237 565,200 570,205 575,200" fill="#1a3a60"/>
+                  <polygon points="570,163 565,200 570,195 575,200" fill="#29d4ff" opacity="0.9" />
+                  <polygon points="570,237 565,200 570,205 575,200" fill="#1a3a60" />
                 </g>
-                <circle cx="570" cy="200" r="4" fill="#29d4ff" opacity="0.8"/>
+                <circle cx="570" cy="200" r="4" fill="#29d4ff" opacity="0.8" />
                 <text fontFamily="monospace" fontSize="14" fill="#29d4ff" x="570" y="271" textAnchor="middle" className="df2">027°</text>
                 <text fontFamily="monospace" fontSize="9" fill="#6a9dc8" x="570" y="285" textAnchor="middle">NNE</text>
                 <text fontFamily="monospace" fontSize="10" fill="#6a9dc8" x="570" y="318" textAnchor="middle" letterSpacing="1">BATTERY</text>
-                <rect x="524" y="326" width="92" height="22" rx="4" fill="#050d1a" stroke="#1a3550" strokeWidth="1"/>
-                <rect x="616" y="331" width="6" height="12" rx="2" fill="#1a3550"/>
-                <rect x="526" y="328" width="72" height="18" rx="3" fill="url(#bf2)" opacity="0.88"><animate attributeName="width" values="72;70;72;73;72" dur="6s" repeatCount="indefinite"/></rect>
+                <rect x="524" y="326" width="92" height="22" rx="4" fill="#050d1a" stroke="#1a3550" strokeWidth="1" />
+                <rect x="616" y="331" width="6" height="12" rx="2" fill="#1a3550" />
+                <rect x="526" y="328" width="72" height="18" rx="3" fill="url(#bf2)" opacity="0.88"><animate attributeName="width" values="72;70;72;73;72" dur="6s" repeatCount="indefinite" /></rect>
                 <text fontFamily="monospace" fontSize="14" fill="#3be08a" x="570" y="372" textAnchor="middle">78%</text>
                 <text fontFamily="monospace" fontSize="9" fill="#3be08a" x="570" y="387" textAnchor="middle">22.1V · 4.8Ah</text>
                 {/* BOTTOM LEFT: SIGNAL */}
-                <rect x="40" y="620" width="200" height="130" rx="10" fill="#070f1e" stroke="#132840" strokeWidth="1" opacity="0.93"/>
+                <rect x="40" y="620" width="200" height="130" rx="10" fill="#070f1e" stroke="#132840" strokeWidth="1" opacity="0.93" />
                 <text fontFamily="monospace" fontSize="10" fill="#6a9dc8" x="60" y="644" letterSpacing="1">SIGNAL</text>
-                <rect x="60" y="710" width="14" height="20" rx="2" fill="url(#sf2)" opacity="0.9"><animate attributeName="opacity" values="0.9;0.6;0.9" dur="1.8s" repeatCount="indefinite"/></rect>
-                <rect x="80" y="698" width="14" height="32" rx="2" fill="url(#sf2)" opacity="0.9"><animate attributeName="opacity" values="0.9;0.7;0.9" dur="2.1s" repeatCount="indefinite"/></rect>
-                <rect x="100" y="682" width="14" height="48" rx="2" fill="url(#sf2)" opacity="0.9"><animate attributeName="opacity" values="0.9;0.8;0.9" dur="1.5s" repeatCount="indefinite"/></rect>
-                <rect x="120" y="668" width="14" height="62" rx="2" fill="url(#sf2)" opacity="0.9"><animate attributeName="opacity" values="0.9;0.75;0.9" dur="2.4s" repeatCount="indefinite"/></rect>
-                <rect x="140" y="660" width="14" height="70" rx="2" fill="#1a3550" stroke="#1a3a60" strokeWidth="0.5"/>
+                <rect x="60" y="710" width="14" height="20" rx="2" fill="url(#sf2)" opacity="0.9"><animate attributeName="opacity" values="0.9;0.6;0.9" dur="1.8s" repeatCount="indefinite" /></rect>
+                <rect x="80" y="698" width="14" height="32" rx="2" fill="url(#sf2)" opacity="0.9"><animate attributeName="opacity" values="0.9;0.7;0.9" dur="2.1s" repeatCount="indefinite" /></rect>
+                <rect x="100" y="682" width="14" height="48" rx="2" fill="url(#sf2)" opacity="0.9"><animate attributeName="opacity" values="0.9;0.8;0.9" dur="1.5s" repeatCount="indefinite" /></rect>
+                <rect x="120" y="668" width="14" height="62" rx="2" fill="url(#sf2)" opacity="0.9"><animate attributeName="opacity" values="0.9;0.75;0.9" dur="2.4s" repeatCount="indefinite" /></rect>
+                <rect x="140" y="660" width="14" height="70" rx="2" fill="#1a3550" stroke="#1a3a60" strokeWidth="0.5" />
                 <text fontFamily="monospace" fontSize="14" fill="#29d4ff" x="185" y="700" textAnchor="end" className="df2">-61</text>
                 <text fontFamily="monospace" fontSize="9" fill="#4a7aaa" x="185" y="715" textAnchor="end">dBm</text>
                 <text fontFamily="monospace" fontSize="10" fill="#3be08a" x="140" y="740" textAnchor="middle">STRONG</text>
                 {/* BOTTOM RIGHT: TELEMETRY */}
-                <rect x="440" y="620" width="200" height="130" rx="10" fill="#070f1e" stroke="#132840" strokeWidth="1" opacity="0.93"/>
+                <rect x="440" y="620" width="200" height="130" rx="10" fill="#070f1e" stroke="#132840" strokeWidth="1" opacity="0.93" />
                 <text fontFamily="monospace" fontSize="10" fill="#6a9dc8" x="460" y="644" letterSpacing="1">TELEMETRY</text>
                 <text fontFamily="monospace" fontSize="11" fill="#4a7aaa" x="460" y="668">PITCH</text>
                 <text fontFamily="monospace" fontSize="11" fill="#29d4ff" x="620" y="668" textAnchor="end" className="df2">-2.4°</text>
-                <line x1="460" y1="673" x2="620" y2="673" stroke="#132840" strokeWidth="0.5"/>
+                <line x1="460" y1="673" x2="620" y2="673" stroke="#132840" strokeWidth="0.5" />
                 <text fontFamily="monospace" fontSize="11" fill="#4a7aaa" x="460" y="692">ROLL</text>
                 <text fontFamily="monospace" fontSize="11" fill="#29d4ff" x="620" y="692" textAnchor="end" className="df2">+1.1°</text>
-                <line x1="460" y1="697" x2="620" y2="697" stroke="#132840" strokeWidth="0.5"/>
+                <line x1="460" y1="697" x2="620" y2="697" stroke="#132840" strokeWidth="0.5" />
                 <text fontFamily="monospace" fontSize="11" fill="#4a7aaa" x="460" y="716">V.SPEED</text>
                 <text fontFamily="monospace" fontSize="11" fill="#3be08a" x="620" y="716" textAnchor="end">0.0 m/s</text>
-                <line x1="460" y1="721" x2="620" y2="721" stroke="#132840" strokeWidth="0.5"/>
+                <line x1="460" y1="721" x2="620" y2="721" stroke="#132840" strokeWidth="0.5" />
                 <text fontFamily="monospace" fontSize="11" fill="#4a7aaa" x="460" y="740">TEMP</text>
                 <text fontFamily="monospace" fontSize="11" fill="#f5c842" x="620" y="740" textAnchor="end" className="df2">38°C</text>
                 {/* BOTTOM CENTER: FLIGHT PATH */}
-                <rect x="240" y="610" width="200" height="150" rx="10" fill="#040c18" stroke="#132840" strokeWidth="1" opacity="0.96"/>
+                <rect x="240" y="610" width="200" height="150" rx="10" fill="#040c18" stroke="#132840" strokeWidth="1" opacity="0.96" />
                 <text fontFamily="monospace" fontSize="10" fill="#6a9dc8" x="340" y="632" textAnchor="middle" letterSpacing="1">FLIGHT PATH</text>
                 <g stroke="#0e2035" strokeWidth="0.5" clipPath="url(#sc2)">
-                  <line x1="240" y1="650" x2="440" y2="650"/><line x1="240" y1="680" x2="440" y2="680"/>
-                  <line x1="240" y1="710" x2="440" y2="710"/><line x1="240" y1="740" x2="440" y2="740"/>
-                  <line x1="270" y1="612" x2="270" y2="760"/><line x1="310" y1="612" x2="310" y2="760"/>
-                  <line x1="340" y1="612" x2="340" y2="760"/><line x1="370" y1="612" x2="370" y2="760"/>
-                  <line x1="410" y1="612" x2="410" y2="760"/>
+                  <line x1="240" y1="650" x2="440" y2="650" /><line x1="240" y1="680" x2="440" y2="680" />
+                  <line x1="240" y1="710" x2="440" y2="710" /><line x1="240" y1="740" x2="440" y2="740" />
+                  <line x1="270" y1="612" x2="270" y2="760" /><line x1="310" y1="612" x2="310" y2="760" />
+                  <line x1="340" y1="612" x2="340" y2="760" /><line x1="370" y1="612" x2="370" y2="760" />
+                  <line x1="410" y1="612" x2="410" y2="760" />
                 </g>
-                <polyline className="pd2" points="268,748 285,730 295,720 305,710 315,698 325,688 332,678 340,695" fill="none" stroke="#1a5299" strokeWidth="2" opacity="0.8"/>
-                <circle cx="268" cy="748" r="5" fill="none" stroke="#3be08a" strokeWidth="1.5"/>
-                <circle cx="268" cy="748" r="2" fill="#3be08a"/>
+                <polyline className="pd2" points="268,748 285,730 295,720 305,710 315,698 325,688 332,678 340,695" fill="none" stroke="#1a5299" strokeWidth="2" opacity="0.8" />
+                <circle cx="268" cy="748" r="5" fill="none" stroke="#3be08a" strokeWidth="1.5" />
+                <circle cx="268" cy="748" r="2" fill="#3be08a" />
                 <text fontFamily="monospace" fontSize="8" fill="#3be08a" x="276" y="752">HOME</text>
-                <circle className="pp2" cx="340" cy="695" r="6" fill="none" stroke="#29d4ff" strokeWidth="1" opacity="0.8"/>
-                <polygon points="340,689 335,700 340,697 345,700" fill="#29d4ff"/>
-                <circle cx="340" cy="695" r="3" fill="#29d4ff"/>
+                <circle className="pp2" cx="340" cy="695" r="6" fill="none" stroke="#29d4ff" strokeWidth="1" opacity="0.8" />
+                <polygon points="340,689 335,700 340,697 345,700" fill="#29d4ff" />
+                <circle cx="340" cy="695" r="3" fill="#29d4ff" />
                 <text fontFamily="monospace" fontSize="8" fill="#29d4ff" x="350" y="694">YOU</text>
                 {/* BOTTOM STRIP */}
-                <rect x="40" y="780" width="600" height="44" rx="10" fill="#0a1e38" stroke="#1a3a60" strokeWidth="1" opacity="0.9"/>
+                <rect x="40" y="780" width="600" height="44" rx="10" fill="#0a1e38" stroke="#1a3a60" strokeWidth="1" opacity="0.9" />
                 <text fontFamily="monospace" fontSize="11" fill="#4a7aaa" x="68" y="806">FLIGHT TIME</text>
                 <text fontFamily="monospace" fontSize="16" fill="#29d4ff" x="160" y="808">00:14:37</text>
                 <text fontFamily="monospace" fontSize="11" fill="#4a7aaa" x="340" y="806" textAnchor="middle">DIST TRAVELED</text>
                 <text fontFamily="monospace" fontSize="14" fill="#29d4ff" x="430" y="808">1.24 km</text>
-                <circle cx="554" cy="797" r="4" fill="#ff3b3b"><animate attributeName="opacity" values="1;0;1" dur="1s" calcMode="discrete" repeatCount="indefinite"/></circle>
+                <circle cx="554" cy="797" r="4" fill="#ff3b3b"><animate attributeName="opacity" values="1;0;1" dur="1s" calcMode="discrete" repeatCount="indefinite" /></circle>
                 <text fontFamily="monospace" fontSize="11" fill="#ff6b6b" x="562" y="802">REC</text>
                 <text fontFamily="monospace" fontSize="9" fill="#4a7aaa" x="562" y="815">4K · 60fps</text>
               </svg>
@@ -437,7 +515,7 @@ export default function HoverMethodPage() {
           <div className="batch-strip">
             <span className="label">May Batches</span>
             <div className="batch-dates">
-              {['18 May','19 May','20 May','21 May','22 May','25 May','26 May'].map(d => <span key={d} className="date-pill">{d}</span>)}
+              {['18 May', '19 May', '20 May', '21 May', '22 May', '25 May', '26 May'].map(d => <span key={d} className="date-pill">{d}</span>)}
             </div>
           </div>
           {/* Step 1 */}
@@ -456,7 +534,7 @@ export default function HoverMethodPage() {
               </div>
             </div>
             <div style={{ padding: '10px 24px 14px', display: 'flex', flexWrap: 'wrap', gap: 7, borderTop: '1px solid rgba(255,255,255,.15)' }}>
-              {['Live instructor-led sessions','Flight simulator practice','Drone science & hardware','GPS & sensors','Mission planning basics','Completion certificate'].map(f => (
+              {['Live instructor-led sessions', 'Flight simulator practice', 'Drone science & hardware', 'GPS & sensors', 'Mission planning basics', 'Completion certificate'].map(f => (
                 <span key={f} style={{ fontSize: 12, color: '#fff', padding: '3px 12px', background: 'rgba(255,255,255,.15)', borderRadius: 14 }}>✓ {f}</span>
               ))}
             </div>
@@ -483,7 +561,7 @@ export default function HoverMethodPage() {
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10, paddingTop: 10, borderTop: '1px solid #FEE2E2' }}>
-                {['How real drones are set up and prepared for flight','Physical walkthrough of drone components and their roles','Supervised hands-on orientation with real drone hardware','Practical explanation of key flight systems'].map(p => <div key={p} style={{ fontSize: 12, color: 'var(--slate)' }}>✓ {p}</div>)}
+                {['How real drones are set up and prepared for flight', 'Physical walkthrough of drone components and their roles', 'Supervised hands-on orientation with real drone hardware', 'Practical explanation of key flight systems'].map(p => <div key={p} style={{ fontSize: 12, color: 'var(--slate)' }}>✓ {p}</div>)}
               </div>
               <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 8, padding: '8px 10px', fontSize: 11, color: '#92400E', display: 'flex', gap: 6 }}>
                 <span>🏫</span><span>If <strong>60+ students from the same school</strong> opt for this, the session is conducted <strong>at your school campus.</strong></span>
@@ -506,7 +584,7 @@ export default function HoverMethodPage() {
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10, paddingTop: 10, borderTop: '1px solid #E0F2FE' }}>
-                {["Premium guided practice at Senrysa's Drone CoE at IIT Research Park","Interaction with researchers and engineers working on UAV systems","Hands-on training in a professional institutional lab environment","Aspirational exposure to India's premier drone R&D ecosystem"].map(p => <div key={p} style={{ fontSize: 12, color: 'var(--slate)' }}>✓ {p}</div>)}
+                {["Premium guided practice at Senrysa's Drone CoE at IIT Research Park", "Interaction with researchers and engineers working on UAV systems", "Hands-on training in a professional institutional lab environment", "Aspirational exposure to India's premier drone R&D ecosystem"].map(p => <div key={p} style={{ fontSize: 12, color: 'var(--slate)' }}>✓ {p}</div>)}
               </div>
               <div style={{ fontSize: 12, color: '#133f56', fontWeight: 500 }}>★ Pre-appointment required · Limited slots · Travel to Kharagpur is independent</div>
             </div>
@@ -523,7 +601,19 @@ export default function HoverMethodPage() {
                 <div style={{ fontSize: 12, color: 'var(--muted)' }}>HoverMethod Junior ₹2,249 + {curName} ₹{fmt(curAddon)}</div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 200 }}>
-                <button onClick={() => pay(cur.total, `HoverMethod Junior + ${curName}`)} disabled={paying} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: 'linear-gradient(135deg,#16A34A,#15803D)', color: '#fff', padding: '15px 28px', borderRadius: 50, fontSize: 16, fontWeight: 700, border: 'none', cursor: paying ? 'not-allowed' : 'pointer', opacity: paying ? .7 : 1, boxShadow: '0 6px 24px rgba(22,163,74,.35)' }}>
+                <button
+                  onClick={() => {
+                    setPendingPayment({ amt: cur.total, desc: `HoverMethod Junior + ${curName}` });
+                    setShowPayForm(true);
+                  }}
+                  disabled={paying}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    background: 'linear-gradient(135deg,#16A34A,#15803D)', color: '#fff',
+                    padding: '15px 28px', borderRadius: 50, fontSize: 16, fontWeight: 700,
+                    border: 'none', cursor: paying ? 'not-allowed' : 'pointer',
+                    opacity: paying ? .7 : 1, boxShadow: '0 6px 24px rgba(22,163,74,.35)',
+                  }}>
                   {paying ? 'Processing…' : 'Pay Now ›'}
                 </button>
                 <div style={{ fontSize: 11, color: 'var(--muted)', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
@@ -545,8 +635,16 @@ export default function HoverMethodPage() {
                 <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--slate)' }}>₹2,249 <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--muted)' }}>+ GST</span></div>
                 <div style={{ fontSize: 11, color: 'var(--muted)' }}>₹2,249 + ₹{fmt(bOnline.g)} GST = ₹{fmt(bOnline.total)}</div>
               </div>
-              <button onClick={() => pay(bOnline.total, 'HoverMethod Junior — Online Foundation')} disabled={paying} style={{ fontSize: 13, fontWeight: 600, color: 'var(--slate)', padding: '9px 20px', borderRadius: 24, border: '1.5px solid var(--border)', background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap' }}>Pay Now</button>
-            </div>
+              <button onClick={() => {
+                setPendingPayment({ amt: bOnline.total, desc: 'HoverMethod Junior — Online Foundation' });
+                setShowPayForm(true);
+              }} disabled={paying} style={{
+                fontSize: 13, fontWeight: 600, color: 'var(--slate)',
+                padding: '9px 20px', borderRadius: 24, border: '1.5px solid var(--border)',
+                background: '#fff', cursor: 'pointer', whiteSpace: 'nowrap'
+              }}>
+                Pay Now
+              </button>            </div>
           </div>
         </div>
       </section>
@@ -632,7 +730,7 @@ export default function HoverMethodPage() {
               <h2 className="sec-title" style={{ color: '#fff' }}>Partner With HoverMethod.<br /><em style={{ color: 'var(--primary)' }}>Bring Drones to Your Campus.</em></h2>
               <p className="sec-sub" style={{ color: 'rgba(255,255,255,.75)' }}>Whether you want to run a student batch programme, set up a drone workshop, establish a campus drone club, or build a full AI/Drone Lab — we partner with schools to make it happen.</p>
               <div className="school-benefits" style={{ marginTop: 28 }}>
-                {[['🎓','Student Batch Programme','Run HoverMethod Junior for your Class 7-12 students as a school or club initiative'],['🔧','Campus Drone Workshop','One-day or weekend hands-on workshop at your school, customised for your student group'],['🤖','AI and Drone Lab Setup','Full turnkey lab: equipment, curriculum, faculty training, and ongoing support'],['📋','NEP 2020 Aligned',"Experiential, STEM-focused content aligned with India's National Education Policy"],['🏫','On-Campus Practical Camp','Schools with 60+ enrolled students get the practical camp at the school campus'],['🏆','School Recognition','Position your school as a leader in STEM innovation and drone technology education']].map(([ic,t,d]) => (
+                {[['🎓', 'Student Batch Programme', 'Run HoverMethod Junior for your Class 7-12 students as a school or club initiative'], ['🔧', 'Campus Drone Workshop', 'One-day or weekend hands-on workshop at your school, customised for your student group'], ['🤖', 'AI and Drone Lab Setup', 'Full turnkey lab: equipment, curriculum, faculty training, and ongoing support'], ['📋', 'NEP 2020 Aligned', "Experiential, STEM-focused content aligned with India's National Education Policy"], ['🏫', 'On-Campus Practical Camp', 'Schools with 60+ enrolled students get the practical camp at the school campus'], ['🏆', 'School Recognition', 'Position your school as a leader in STEM innovation and drone technology education']].map(([ic, t, d]) => (
                   <div key={t as string} className="sb-item"><span className="sb-icon">{ic}</span><div><strong>{t}</strong> — {d}</div></div>
                 ))}
               </div>
@@ -651,14 +749,14 @@ export default function HoverMethodPage() {
                     <div><label style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 4 }}>Approx. Students</label>
                       <select ref={sfStudents} style={{ width: '100%', border: '1.5px solid var(--border)', borderRadius: 8, padding: '9px 11px', fontSize: 13, fontFamily: 'inherit', outline: 'none', background: '#fff', boxSizing: 'border-box' }}>
                         <option value="">Select range</option>
-                        {['Under 30','30 to 60','60 to 100','100 to 200','200 plus'].map(o => <option key={o}>{o}</option>)}
+                        {['Under 30', '30 to 60', '60 to 100', '100 to 200', '200 plus'].map(o => <option key={o}>{o}</option>)}
                       </select>
                     </div>
                   </div>
                   <div>
                     <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 6 }}>Interested in</label>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                      {['Student Programme','Campus Workshop','Drone Lab Setup','AI Lab Setup','Tie-Up Partnership'].map(val => (
+                      {['Student Programme', 'Campus Workshop', 'Drone Lab Setup', 'AI Lab Setup', 'Tie-Up Partnership'].map(val => (
                         <label key={val} style={{ cursor: 'pointer' }}>
                           <input type="checkbox" style={{ display: 'none' }} checked={sfInterests.includes(val)} onChange={() => setSfInterests(p => p.includes(val) ? p.filter(v => v !== val) : [...p, val])} />
                           <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: 16, fontSize: 11, fontWeight: 600, border: sfInterests.includes(val) ? '1.5px solid var(--sky)' : '1.5px solid var(--border)', color: sfInterests.includes(val) ? 'var(--sky-dd)' : 'var(--muted)', background: sfInterests.includes(val) ? 'var(--sky-xl)' : '#fff' }}>{val}</span>
@@ -738,7 +836,7 @@ export default function HoverMethodPage() {
           <div className="premium-addon">
             <div>
               <div className="coe-items">
-                {[['🚁','See professional research-grade drone systems used in real industrial and defence missions'],['🔬','Walk through a specialised UAV design, fabrication, and testing lab at IIT Research Park'],['🎓','Interact with researchers and engineers working on drone autonomy and AI systems'],['🤖','Exposure to AI/ML in drone navigation, computer vision, and autonomous flight'],['✈️','Supervised hands-on session with professional-grade hardware in a real R&D environment']].map(([ic,t]) => (
+                {[['🚁', 'See professional research-grade drone systems used in real industrial and defence missions'], ['🔬', 'Walk through a specialised UAV design, fabrication, and testing lab at IIT Research Park'], ['🎓', 'Interact with researchers and engineers working on drone autonomy and AI systems'], ['🤖', 'Exposure to AI/ML in drone navigation, computer vision, and autonomous flight'], ['✈️', 'Supervised hands-on session with professional-grade hardware in a real R&D environment']].map(([ic, t]) => (
                   <div key={t as string} className="coe-item"><div className="ci2">{ic}</div><div>{t}</div></div>
                 ))}
               </div>
@@ -747,19 +845,19 @@ export default function HoverMethodPage() {
                 <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', marginBottom: 6 }}>Senrysa Drone Center of Excellence</div>
                 <div style={{ fontSize: 14, color: 'rgba(255,255,255,.82)', lineHeight: 1.8 }}>IIT Kharagpur Research Park<br />Plot No. IIIB-12, Category Bulk Land<br />Action Area-III, New Town<br /><strong style={{ color: '#fde8da' }}>Kolkata – 700 160</strong></div>
                 <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,.1)', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {['4 Hours','Pre-appointment required'].map(t => <span key={t} style={{ background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 14, padding: '3px 10px', fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,.7)' }}>{t}</span>)}
+                  {['4 Hours', 'Pre-appointment required'].map(t => <span key={t} style={{ background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 14, padding: '3px 10px', fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,.7)' }}>{t}</span>)}
                   <span style={{ background: 'rgba(19,63,86,.2)', border: '1px solid rgba(19,63,86,.3)', borderRadius: 14, padding: '3px 10px', fontSize: 11, fontWeight: 600, color: '#fde8da' }}>Limited slots</span>
                 </div>
               </div>
             </div>
             <div>
-              <svg width="100%" viewBox="0 0 680 650" xmlns="http://www.w3.org/2000/svg" style={{borderRadius:12,marginBottom:16}}>
+              <svg width="100%" viewBox="0 0 680 650" xmlns="http://www.w3.org/2000/svg" style={{ borderRadius: 12, marginBottom: 16 }}>
                 <defs>
-                  <linearGradient id="skyG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0a1628"/><stop offset="100%" stopColor="#0e2240"/></linearGradient>
-                  <linearGradient id="bldG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#1a3a6e"/><stop offset="100%" stopColor="#0f2448"/></linearGradient>
-                  <linearGradient id="coeG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#1e4d9a"/><stop offset="100%" stopColor="#122e68"/></linearGradient>
-                  <linearGradient id="glG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2a6acc" stopOpacity="0.7"/><stop offset="100%" stopColor="#1a3f8f" stopOpacity="0.5"/></linearGradient>
-                  <linearGradient id="rdG" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#0a1628"/><stop offset="50%" stopColor="#152040"/><stop offset="100%" stopColor="#0a1628"/></linearGradient>
+                  <linearGradient id="skyG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0a1628" /><stop offset="100%" stopColor="#0e2240" /></linearGradient>
+                  <linearGradient id="bldG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#1a3a6e" /><stop offset="100%" stopColor="#0f2448" /></linearGradient>
+                  <linearGradient id="coeG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#1e4d9a" /><stop offset="100%" stopColor="#122e68" /></linearGradient>
+                  <linearGradient id="glG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2a6acc" stopOpacity="0.7" /><stop offset="100%" stopColor="#1a3f8f" stopOpacity="0.5" /></linearGradient>
+                  <linearGradient id="rdG" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stopColor="#0a1628" /><stop offset="50%" stopColor="#152040" /><stop offset="100%" stopColor="#0a1628" /></linearGradient>
                   <style>{`
                     @keyframes dF2{0%,100%{transform:translateY(0px) translateX(0px)}25%{transform:translateY(-8px) translateX(4px)}75%{transform:translateY(4px) translateX(-3px)}}
                     @keyframes pS2{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
@@ -783,69 +881,69 @@ export default function HoverMethodPage() {
                     .tr2{animation:tW 5s ease-in-out infinite 1s;transform-origin:600px 460px}
                   `}</style>
                 </defs>
-                <rect width="680" height="650" fill="url(#skyG)" rx="12"/>
-                <circle cx="610" cy="52" r="22" fill="#1e3a6e"/><circle cx="622" cy="46" r="18" fill="#0a1628"/>
-                <circle cx="80" cy="40" r="1.2" fill="#a8c8f0" opacity="0.7"/><circle cx="180" cy="25" r="1" fill="#c0d8f8" opacity="0.6"/><circle cx="420" cy="30" r="1" fill="#c0d8f8" opacity="0.7"/><circle cx="560" cy="45" r="1.2" fill="#a8c8f0" opacity="0.6"/>
-                <rect x="0" y="548" width="680" height="34" fill="url(#rdG)" opacity="0.9"/>
-                <line x1="0" y1="565" x2="680" y2="565" stroke="#1e3a6e" strokeWidth="1" strokeDasharray="18 14"/>
-                <g className="cr1"><rect x="40" y="553" width="38" height="18" rx="4" fill="#1a4a8a" opacity="0.9"/><rect x="76" y="558" width="5" height="5" rx="1" fill="#f5c842" opacity="0.9"/></g>
-                <g className="cr2"><rect x="580" y="562" width="36" height="16" rx="4" fill="#2a4a1a" opacity="0.9"/><rect x="578" y="565" width="4" height="4" rx="1" fill="#ff6060" opacity="0.8"/></g>
-                <rect x="160" y="583" width="360" height="30" fill="#0f2040" opacity="0.8"/>
-                <g className="tr1"><rect x="82" y="455" width="6" height="80" rx="2" fill="#1a3a1a"/><ellipse cx="85" cy="445" rx="22" ry="28" fill="#1a4a1a"/><ellipse cx="85" cy="435" rx="16" ry="20" fill="#1f5a1f"/></g>
-                <g className="tr2"><rect x="597" y="455" width="6" height="80" rx="2" fill="#1a3a1a"/><ellipse cx="600" cy="445" rx="22" ry="28" fill="#1a4a1a"/><ellipse cx="600" cy="435" rx="16" ry="20" fill="#1f5a1f"/></g>
-                <rect x="168" y="380" width="120" height="200" fill="url(#bldG)" rx="3"/>
+                <rect width="680" height="650" fill="url(#skyG)" rx="12" />
+                <circle cx="610" cy="52" r="22" fill="#1e3a6e" /><circle cx="622" cy="46" r="18" fill="#0a1628" />
+                <circle cx="80" cy="40" r="1.2" fill="#a8c8f0" opacity="0.7" /><circle cx="180" cy="25" r="1" fill="#c0d8f8" opacity="0.6" /><circle cx="420" cy="30" r="1" fill="#c0d8f8" opacity="0.7" /><circle cx="560" cy="45" r="1.2" fill="#a8c8f0" opacity="0.6" />
+                <rect x="0" y="548" width="680" height="34" fill="url(#rdG)" opacity="0.9" />
+                <line x1="0" y1="565" x2="680" y2="565" stroke="#1e3a6e" strokeWidth="1" strokeDasharray="18 14" />
+                <g className="cr1"><rect x="40" y="553" width="38" height="18" rx="4" fill="#1a4a8a" opacity="0.9" /><rect x="76" y="558" width="5" height="5" rx="1" fill="#f5c842" opacity="0.9" /></g>
+                <g className="cr2"><rect x="580" y="562" width="36" height="16" rx="4" fill="#2a4a1a" opacity="0.9" /><rect x="578" y="565" width="4" height="4" rx="1" fill="#ff6060" opacity="0.8" /></g>
+                <rect x="160" y="583" width="360" height="30" fill="#0f2040" opacity="0.8" />
+                <g className="tr1"><rect x="82" y="455" width="6" height="80" rx="2" fill="#1a3a1a" /><ellipse cx="85" cy="445" rx="22" ry="28" fill="#1a4a1a" /><ellipse cx="85" cy="435" rx="16" ry="20" fill="#1f5a1f" /></g>
+                <g className="tr2"><rect x="597" y="455" width="6" height="80" rx="2" fill="#1a3a1a" /><ellipse cx="600" cy="445" rx="22" ry="28" fill="#1a4a1a" /><ellipse cx="600" cy="435" rx="16" ry="20" fill="#1f5a1f" /></g>
+                <rect x="168" y="380" width="120" height="200" fill="url(#bldG)" rx="3" />
                 <g fill="url(#glG)" className="wg3">
-                  <rect x="180" y="395" width="18" height="12" rx="2"/><rect x="205" y="395" width="18" height="12" rx="2"/><rect x="230" y="395" width="18" height="12" rx="2"/><rect x="255" y="395" width="18" height="12" rx="2"/>
-                  <rect x="180" y="420" width="18" height="12" rx="2"/><rect x="205" y="420" width="18" height="12" rx="2"/><rect x="230" y="420" width="18" height="12" rx="2"/><rect x="255" y="420" width="18" height="12" rx="2"/>
-                  <rect x="180" y="445" width="18" height="12" rx="2"/><rect x="205" y="445" width="18" height="12" rx="2"/><rect x="230" y="445" width="18" height="12" rx="2"/><rect x="255" y="445" width="18" height="12" rx="2"/>
-                  <rect x="180" y="470" width="18" height="12" rx="2"/><rect x="205" y="470" width="18" height="12" rx="2"/><rect x="230" y="470" width="18" height="12" rx="2"/><rect x="255" y="470" width="18" height="12" rx="2"/>
+                  <rect x="180" y="395" width="18" height="12" rx="2" /><rect x="205" y="395" width="18" height="12" rx="2" /><rect x="230" y="395" width="18" height="12" rx="2" /><rect x="255" y="395" width="18" height="12" rx="2" />
+                  <rect x="180" y="420" width="18" height="12" rx="2" /><rect x="205" y="420" width="18" height="12" rx="2" /><rect x="230" y="420" width="18" height="12" rx="2" /><rect x="255" y="420" width="18" height="12" rx="2" />
+                  <rect x="180" y="445" width="18" height="12" rx="2" /><rect x="205" y="445" width="18" height="12" rx="2" /><rect x="230" y="445" width="18" height="12" rx="2" /><rect x="255" y="445" width="18" height="12" rx="2" />
+                  <rect x="180" y="470" width="18" height="12" rx="2" /><rect x="205" y="470" width="18" height="12" rx="2" /><rect x="230" y="470" width="18" height="12" rx="2" /><rect x="255" y="470" width="18" height="12" rx="2" />
                 </g>
-                <rect x="392" y="380" width="120" height="200" fill="url(#bldG)" rx="3"/>
+                <rect x="392" y="380" width="120" height="200" fill="url(#bldG)" rx="3" />
                 <g fill="url(#glG)" className="wg3">
-                  <rect x="404" y="395" width="18" height="12" rx="2"/><rect x="429" y="395" width="18" height="12" rx="2"/><rect x="454" y="395" width="18" height="12" rx="2"/><rect x="479" y="395" width="18" height="12" rx="2"/>
-                  <rect x="404" y="420" width="18" height="12" rx="2"/><rect x="429" y="420" width="18" height="12" rx="2"/><rect x="454" y="420" width="18" height="12" rx="2"/><rect x="479" y="420" width="18" height="12" rx="2"/>
-                  <rect x="404" y="445" width="18" height="12" rx="2"/><rect x="429" y="445" width="18" height="12" rx="2"/><rect x="454" y="445" width="18" height="12" rx="2"/><rect x="479" y="445" width="18" height="12" rx="2"/>
-                  <rect x="404" y="470" width="18" height="12" rx="2"/><rect x="429" y="470" width="18" height="12" rx="2"/><rect x="454" y="470" width="18" height="12" rx="2"/><rect x="479" y="470" width="18" height="12" rx="2"/>
+                  <rect x="404" y="395" width="18" height="12" rx="2" /><rect x="429" y="395" width="18" height="12" rx="2" /><rect x="454" y="395" width="18" height="12" rx="2" /><rect x="479" y="395" width="18" height="12" rx="2" />
+                  <rect x="404" y="420" width="18" height="12" rx="2" /><rect x="429" y="420" width="18" height="12" rx="2" /><rect x="454" y="420" width="18" height="12" rx="2" /><rect x="479" y="420" width="18" height="12" rx="2" />
+                  <rect x="404" y="445" width="18" height="12" rx="2" /><rect x="429" y="445" width="18" height="12" rx="2" /><rect x="454" y="445" width="18" height="12" rx="2" /><rect x="479" y="445" width="18" height="12" rx="2" />
+                  <rect x="404" y="470" width="18" height="12" rx="2" /><rect x="429" y="470" width="18" height="12" rx="2" /><rect x="454" y="470" width="18" height="12" rx="2" /><rect x="479" y="470" width="18" height="12" rx="2" />
                 </g>
-                <rect x="256" y="310" width="168" height="270" fill="url(#coeG)" rx="4"/>
+                <rect x="256" y="310" width="168" height="270" fill="url(#coeG)" rx="4" />
                 <g fill="url(#glG)" className="wg3">
-                  <rect x="268" y="325" width="30" height="28" rx="2"/><rect x="305" y="325" width="30" height="28" rx="2"/><rect x="342" y="325" width="30" height="28" rx="2"/><rect x="379" y="325" width="30" height="28" rx="2"/>
-                  <rect x="268" y="368" width="30" height="28" rx="2"/><rect x="305" y="368" width="30" height="28" rx="2"/><rect x="342" y="368" width="30" height="28" rx="2"/><rect x="379" y="368" width="30" height="28" rx="2"/>
-                  <rect x="268" y="418" width="30" height="28" rx="2"/><rect x="305" y="418" width="30" height="28" rx="2"/><rect x="342" y="418" width="30" height="28" rx="2"/><rect x="379" y="418" width="30" height="28" rx="2"/>
-                  <rect x="268" y="468" width="30" height="28" rx="2"/><rect x="305" y="468" width="30" height="28" rx="2"/><rect x="342" y="468" width="30" height="28" rx="2"/><rect x="379" y="468" width="30" height="28" rx="2"/>
+                  <rect x="268" y="325" width="30" height="28" rx="2" /><rect x="305" y="325" width="30" height="28" rx="2" /><rect x="342" y="325" width="30" height="28" rx="2" /><rect x="379" y="325" width="30" height="28" rx="2" />
+                  <rect x="268" y="368" width="30" height="28" rx="2" /><rect x="305" y="368" width="30" height="28" rx="2" /><rect x="342" y="368" width="30" height="28" rx="2" /><rect x="379" y="368" width="30" height="28" rx="2" />
+                  <rect x="268" y="418" width="30" height="28" rx="2" /><rect x="305" y="418" width="30" height="28" rx="2" /><rect x="342" y="418" width="30" height="28" rx="2" /><rect x="379" y="418" width="30" height="28" rx="2" />
+                  <rect x="268" y="468" width="30" height="28" rx="2" /><rect x="305" y="468" width="30" height="28" rx="2" /><rect x="342" y="468" width="30" height="28" rx="2" /><rect x="379" y="468" width="30" height="28" rx="2" />
                 </g>
-                <rect x="250" y="302" width="180" height="12" rx="3" fill="#1e4888"/>
-                <rect x="272" y="520" width="136" height="28" rx="4" fill="#0a1e48" opacity="0.9"/>
+                <rect x="250" y="302" width="180" height="12" rx="3" fill="#1e4888" />
+                <rect x="272" y="520" width="136" height="28" rx="4" fill="#0a1e48" opacity="0.9" />
                 <text fontFamily="monospace" fontSize="11" fill="#5aa0e8" x="340" y="538" textAnchor="middle" letterSpacing="2">SENRYSA CoE</text>
-                <rect x="298" y="560" width="84" height="20" rx="2" fill="#0f1e3a"/>
-                <line x1="530" y1="580" x2="530" y2="290" stroke="#2a4a7a" strokeWidth="2"/>
-                <polygon points="530,290 530,310 556,300" fill="#e04040" opacity="0.9"><animateTransform attributeName="transform" type="skewX" values="0;4;0;-3;0" keyTimes="0;0.25;0.5;0.75;1" dur="3s" repeatCount="indefinite"/></polygon>
+                <rect x="298" y="560" width="84" height="20" rx="2" fill="#0f1e3a" />
+                <line x1="530" y1="580" x2="530" y2="290" stroke="#2a4a7a" strokeWidth="2" />
+                <polygon points="530,290 530,310 556,300" fill="#e04040" opacity="0.9"><animateTransform attributeName="transform" type="skewX" values="0;4;0;-3;0" keyTimes="0;0.25;0.5;0.75;1" dur="3s" repeatCount="indefinite" /></polygon>
                 <g className="db3">
-                  <circle className="sg1" cx="340" cy="130" r="0" fill="none" stroke="#29d4ff" strokeWidth="1.5" opacity="0.7"/>
-                  <circle className="sg2" cx="340" cy="130" r="0" fill="none" stroke="#29d4ff" strokeWidth="1" opacity="0.5"/>
-                  <line x1="317" y1="125" x2="296" y2="112" stroke="#1a3a6e" strokeWidth="5" strokeLinecap="round"/>
-                  <line x1="363" y1="125" x2="384" y2="112" stroke="#1a3a6e" strokeWidth="5" strokeLinecap="round"/>
-                  <line x1="317" y1="137" x2="296" y2="150" stroke="#1a3a6e" strokeWidth="5" strokeLinecap="round"/>
-                  <line x1="363" y1="137" x2="384" y2="150" stroke="#1a3a6e" strokeWidth="5" strokeLinecap="round"/>
-                  <circle cx="294" cy="110" r="10" fill="#0e2248" stroke="#2a5aaa" strokeWidth="1.5"/>
-                  <circle cx="386" cy="110" r="10" fill="#0e2248" stroke="#2a5aaa" strokeWidth="1.5"/>
-                  <circle cx="294" cy="152" r="10" fill="#0e2248" stroke="#2a5aaa" strokeWidth="1.5"/>
-                  <circle cx="386" cy="152" r="10" fill="#0e2248" stroke="#2a5aaa" strokeWidth="1.5"/>
-                  <g className="pt3"><ellipse cx="294" cy="110" rx="26" ry="4" fill="#2a5aaa" opacity="0.55"/><ellipse cx="294" cy="110" rx="26" ry="4" fill="#2a5aaa" opacity="0.45" transform="rotate(90 294 110)"/></g>
-                  <g className="ptr3"><ellipse cx="386" cy="110" rx="26" ry="4" fill="#2a5aaa" opacity="0.55"/><ellipse cx="386" cy="110" rx="26" ry="4" fill="#2a5aaa" opacity="0.45" transform="rotate(90 386 110)"/></g>
-                  <g className="pb3"><ellipse cx="294" cy="152" rx="26" ry="4" fill="#2a5aaa" opacity="0.55"/><ellipse cx="294" cy="152" rx="26" ry="4" fill="#2a5aaa" opacity="0.45" transform="rotate(90 294 152)"/></g>
-                  <g className="pbr3"><ellipse cx="386" cy="152" rx="26" ry="4" fill="#2a5aaa" opacity="0.55"/><ellipse cx="386" cy="152" rx="26" ry="4" fill="#2a5aaa" opacity="0.45" transform="rotate(90 386 152)"/></g>
-                  <rect x="316" y="112" width="48" height="38" rx="10" fill="#0e2248" stroke="#2a5aaa" strokeWidth="1.5"/>
-                  <circle cx="340" cy="131" r="10" fill="#081428" stroke="#1a3a6e" strokeWidth="1"/>
-                  <circle cx="340" cy="131" r="6" fill="#0a1e3a" stroke="#2a5aaa" strokeWidth="0.8"/>
-                  <circle cx="340" cy="131" r="3" fill="#051020"/>
-                  <circle cx="338" cy="129" r="1.2" fill="#29d4ff" opacity="0.7"/>
-                  <circle cx="322" cy="118" r="2.5" fill="#29d4ff"><animate attributeName="opacity" values="0.9;0.2;0.9" dur="1.4s" repeatCount="indefinite"/></circle>
-                  <circle cx="358" cy="118" r="2.5" fill="#29d4ff"><animate attributeName="opacity" values="0.9;0.2;0.9" dur="1.4s" begin="0.7s" repeatCount="indefinite"/></circle>
-                  <circle cx="322" cy="144" r="2.5" fill="#3be08a"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="2.2s" repeatCount="indefinite"/></circle>
-                  <circle cx="358" cy="144" r="2.5" fill="#3be08a"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="2.2s" begin="1.1s" repeatCount="indefinite"/></circle>
+                  <circle className="sg1" cx="340" cy="130" r="0" fill="none" stroke="#29d4ff" strokeWidth="1.5" opacity="0.7" />
+                  <circle className="sg2" cx="340" cy="130" r="0" fill="none" stroke="#29d4ff" strokeWidth="1" opacity="0.5" />
+                  <line x1="317" y1="125" x2="296" y2="112" stroke="#1a3a6e" strokeWidth="5" strokeLinecap="round" />
+                  <line x1="363" y1="125" x2="384" y2="112" stroke="#1a3a6e" strokeWidth="5" strokeLinecap="round" />
+                  <line x1="317" y1="137" x2="296" y2="150" stroke="#1a3a6e" strokeWidth="5" strokeLinecap="round" />
+                  <line x1="363" y1="137" x2="384" y2="150" stroke="#1a3a6e" strokeWidth="5" strokeLinecap="round" />
+                  <circle cx="294" cy="110" r="10" fill="#0e2248" stroke="#2a5aaa" strokeWidth="1.5" />
+                  <circle cx="386" cy="110" r="10" fill="#0e2248" stroke="#2a5aaa" strokeWidth="1.5" />
+                  <circle cx="294" cy="152" r="10" fill="#0e2248" stroke="#2a5aaa" strokeWidth="1.5" />
+                  <circle cx="386" cy="152" r="10" fill="#0e2248" stroke="#2a5aaa" strokeWidth="1.5" />
+                  <g className="pt3"><ellipse cx="294" cy="110" rx="26" ry="4" fill="#2a5aaa" opacity="0.55" /><ellipse cx="294" cy="110" rx="26" ry="4" fill="#2a5aaa" opacity="0.45" transform="rotate(90 294 110)" /></g>
+                  <g className="ptr3"><ellipse cx="386" cy="110" rx="26" ry="4" fill="#2a5aaa" opacity="0.55" /><ellipse cx="386" cy="110" rx="26" ry="4" fill="#2a5aaa" opacity="0.45" transform="rotate(90 386 110)" /></g>
+                  <g className="pb3"><ellipse cx="294" cy="152" rx="26" ry="4" fill="#2a5aaa" opacity="0.55" /><ellipse cx="294" cy="152" rx="26" ry="4" fill="#2a5aaa" opacity="0.45" transform="rotate(90 294 152)" /></g>
+                  <g className="pbr3"><ellipse cx="386" cy="152" rx="26" ry="4" fill="#2a5aaa" opacity="0.55" /><ellipse cx="386" cy="152" rx="26" ry="4" fill="#2a5aaa" opacity="0.45" transform="rotate(90 386 152)" /></g>
+                  <rect x="316" y="112" width="48" height="38" rx="10" fill="#0e2248" stroke="#2a5aaa" strokeWidth="1.5" />
+                  <circle cx="340" cy="131" r="10" fill="#081428" stroke="#1a3a6e" strokeWidth="1" />
+                  <circle cx="340" cy="131" r="6" fill="#0a1e3a" stroke="#2a5aaa" strokeWidth="0.8" />
+                  <circle cx="340" cy="131" r="3" fill="#051020" />
+                  <circle cx="338" cy="129" r="1.2" fill="#29d4ff" opacity="0.7" />
+                  <circle cx="322" cy="118" r="2.5" fill="#29d4ff"><animate attributeName="opacity" values="0.9;0.2;0.9" dur="1.4s" repeatCount="indefinite" /></circle>
+                  <circle cx="358" cy="118" r="2.5" fill="#29d4ff"><animate attributeName="opacity" values="0.9;0.2;0.9" dur="1.4s" begin="0.7s" repeatCount="indefinite" /></circle>
+                  <circle cx="322" cy="144" r="2.5" fill="#3be08a"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="2.2s" repeatCount="indefinite" /></circle>
+                  <circle cx="358" cy="144" r="2.5" fill="#3be08a"><animate attributeName="opacity" values="0.9;0.3;0.9" dur="2.2s" begin="1.1s" repeatCount="indefinite" /></circle>
                 </g>
-                <rect x="85" y="600" width="510" height="26" rx="6" fill="#060e1e" opacity="0.9"/>
+                <rect x="85" y="600" width="510" height="26" rx="6" fill="#060e1e" opacity="0.9" />
                 <text fontFamily="monospace" fontSize="11" fill="#3a6aaa" x="340" y="617" textAnchor="middle">IIT Kharagpur Research Park · Action Area-III, New Town, Kolkata – 700 160</text>
               </svg>
               <div className="coe-cta-box">
@@ -857,7 +955,10 @@ export default function HoverMethodPage() {
                   <span style={{ fontSize: 13, color: 'rgba(255,255,255,.5)' }}>&nbsp;+ GST</span>
                 </div>
                 <div style={{ fontSize: 12, color: 'rgba(255,255,255,.5)', marginBottom: 22 }}>per student · 4 hours · separate booking</div>
-                <button onClick={() => pay(calcGst(3249).total, 'CoE Experience — IIT Research Park')} disabled={paying} className="coe-book-btn" style={{ border: 'none' }}>
+                <button onClick={() => {
+                  setPendingPayment({ amt: calcGst(3249).total, desc: 'CoE Experience — IIT Research Park' });
+                  setShowPayForm(true);
+                }} disabled={paying} className="coe-book-btn" style={{ border: 'none' }}>
                   <svg style={{ width: 18, height: 18, fill: '#fff', flexShrink: 0 }} viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" /></svg>
                   Book CoE Experience via WhatsApp
                 </button>
@@ -901,8 +1002,11 @@ export default function HoverMethodPage() {
           <h2>Start with the Foundation.<br /><span>Add Practical Learning</span> If You Want More.</h2>
           <p>Give students an early and meaningful introduction to drone technology through structured live learning — with optional practical and premium experiences available when they are ready.</p>
           <div className="final-btns">
-            <button className="fb-wa" onClick={() => pay(bOnline.total, 'HoverMethod Junior — Online Foundation')} disabled={paying} style={{ border: 'none', cursor: 'pointer' }}>
-              Enrol for HoverMethod Junior — ₹2,249
+            <button className="fb-wa" onClick={() => {
+              setPendingPayment({ amt: bOnline.total, desc: 'HoverMethod Junior — Online Foundation' });
+              setShowPayForm(true);
+            }} disabled={paying} style={{ border: 'none', cursor: 'pointer' }}>
+              {paying ? 'Processing…' : 'Pay Now ›'}
             </button>
             <button className="fb-sky" onClick={() => { setBundle('a'); document.getElementById('enroll')?.scrollIntoView({ behavior: 'smooth' }); }} style={{ border: 'none', cursor: 'pointer' }}>
               + Add Practical Camp
@@ -911,6 +1015,116 @@ export default function HoverMethodPage() {
           </div>
         </div>
       </section>
+
+      {showPayForm && pendingPayment && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 9999, padding: 16,
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: 20, padding: 28,
+            width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,.3)',
+          }}>
+            <h3 style={{ fontSize: 18, fontWeight: 800, color: 'var(--navy)', marginBottom: 4 }}>
+              Complete Enrolment
+            </h3>
+            <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 20 }}>
+              Enter your details to proceed to payment
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <label style={{
+                  fontSize: 11, fontWeight: 700, color: 'var(--muted)',
+                  textTransform: 'uppercase', display: 'block', marginBottom: 4
+                }}>
+                  Full Name *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Riya Sharma"
+                  value={payName}
+                  onChange={e => setPayName(e.target.value)}
+                  style={{
+                    width: '100%', border: '1.5px solid var(--border)', borderRadius: 8,
+                    padding: '10px 12px', fontSize: 14, fontFamily: 'inherit',
+                    outline: 'none', boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{
+                  fontSize: 11, fontWeight: 700, color: 'var(--muted)',
+                  textTransform: 'uppercase', display: 'block', marginBottom: 4
+                }}>
+                  Email *
+                </label>
+                <input
+                  type="email"
+                  placeholder="e.g. riya@gmail.com"
+                  value={payEmail}
+                  onChange={e => setPayEmail(e.target.value)}
+                  style={{
+                    width: '100%', border: '1.5px solid var(--border)', borderRadius: 8,
+                    padding: '10px 12px', fontSize: 14, fontFamily: 'inherit',
+                    outline: 'none', boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{
+                  fontSize: 11, fontWeight: 700, color: 'var(--muted)',
+                  textTransform: 'uppercase', display: 'block', marginBottom: 4
+                }}>
+                  Phone *
+                </label>
+                <input
+                  type="tel"
+                  placeholder="+91 XXXXX XXXXX"
+                  value={payPhone}
+                  onChange={e => setPayPhone(e.target.value)}
+                  style={{
+                    width: '100%', border: '1.5px solid var(--border)', borderRadius: 8,
+                    padding: '10px 12px', fontSize: 14, fontFamily: 'inherit',
+                    outline: 'none', boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+                <button
+                  onClick={() => { setShowPayForm(false); setPendingPayment(null); }}
+                  style={{
+                    flex: 1, padding: '12px', borderRadius: 50, border: '1.5px solid var(--border)',
+                    background: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer',
+                    color: 'var(--muted)'
+                  }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (!payName.trim() || !payEmail.trim() || !payPhone.trim()) {
+                      alert('Please fill in all fields');
+                      return;
+                    }
+                    setShowPayForm(false);
+                    pay(pendingPayment.amt, pendingPayment.desc, payName, payEmail, payPhone);
+                  }}
+                  style={{
+                    flex: 2, padding: '12px', borderRadius: 50, border: 'none',
+                    background: 'linear-gradient(135deg,#16A34A,#15803D)', color: '#fff',
+                    fontSize: 14, fontWeight: 700, cursor: 'pointer'
+                  }}>
+                  Proceed to Pay ›
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* FOOTER */}
       <footer>
