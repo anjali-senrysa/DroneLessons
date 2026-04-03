@@ -65,6 +65,9 @@ export default function HoverMethodPage() {
   const [navShadow, setNavShadow] = useState(false);
   const [paying, setPaying] = useState(false);
   const [success, setSuccess] = useState('');
+  const [schoolError, setSchoolError] = useState('');
+  const [nameError, setNameError] = useState('');
+  const [phoneError, setPhoneError] = useState('');
   const [sfInterests, setSfInterests] = useState<string[]>([]);
   const sfSchool = useRef<HTMLInputElement>(null);
   const sfName = useRef<HTMLInputElement>(null);
@@ -76,6 +79,12 @@ export default function HoverMethodPage() {
   const [payName, setPayName] = useState('');
   const [payEmail, setPayEmail] = useState('');
   const [payPhone, setPayPhone] = useState('');
+  const [payNameError, setPayNameError] = useState('');
+  const [payEmailError, setPayEmailError] = useState('');
+  const [payPhoneError, setPayPhoneError] = useState('');
+  const payNameRef = useRef<HTMLInputElement>(null);
+  const payEmailRef = useRef<HTMLInputElement>(null);
+  const payPhoneRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const s = () => { setNavShadow(window.scrollY > 40); setShowScroll(window.scrollY > 500); };
@@ -188,7 +197,37 @@ export default function HoverMethodPage() {
     const school = sfSchool.current?.value.trim() ?? '';
     const name = sfName.current?.value.trim() ?? '';
     const phone = sfPhone.current?.value.trim() ?? '';
-    if (!school || !name || !phone) { alert('Please fill in School Name, Your Name, and Phone.'); return; }
+
+    setSchoolError('');
+    setNameError('');
+    setPhoneError('');
+
+    if (!school) {
+      setSchoolError('School name is required');
+      sfSchool.current?.focus();
+      return;
+    }
+
+    if (!name) {
+      setNameError('Contact person name is required');
+      sfName.current?.focus();
+      return;
+    }
+
+    if (!phone) {
+      setPhoneError('Phone number is required');
+      sfPhone.current?.focus();
+      return;
+    }
+
+    const sanitizedPhone = phone.replace(/[^0-9]/g, '');
+    const phoneIsValid = /^(?:91|0)?[6-9][0-9]{9}$/.test(sanitizedPhone);
+    if (!phoneIsValid) {
+      setPhoneError('Please enter a valid Indian phone number (10 digits, optionally +91 or 0).');
+      sfPhone.current?.focus();
+      return;
+    }
+
     let txt = `Hi, I represent ${school}.\n\nContact: ${name}\nPhone: ${phone}`;
     if (sfStudents.current?.value) txt += `\nApprox. Students: ${sfStudents.current.value}`;
     if (sfInterests.length) txt += `\nInterested in: ${sfInterests.join(', ')}`;
@@ -741,11 +780,23 @@ export default function HoverMethodPage() {
                 <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 18, lineHeight: 1.5 }}>Tell us about your school. We respond within 24 hours.</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    <div><label style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 4 }}>School Name</label><input ref={sfSchool} type="text" placeholder="e.g. DPS Newtown" style={{ width: '100%', border: '1.5px solid var(--border)', borderRadius: 8, padding: '9px 11px', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} /></div>
-                    <div><label style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 4 }}>Your Name</label><input ref={sfName} type="text" placeholder="Contact person" style={{ width: '100%', border: '1.5px solid var(--border)', borderRadius: 8, padding: '9px 11px', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} /></div>
+                    <div>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 4 }}>School Name</label>
+                      <input ref={sfSchool} type="text" placeholder="e.g. DPS Newtown" style={{ width: '100%', border: '1.5px solid var(--border)', borderRadius: 8, padding: '9px 11px', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} />
+                      {schoolError && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 4 }}>{schoolError}</div>}
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 4 }}>Your Name</label>
+                      <input ref={sfName} type="text" placeholder="Contact person" style={{ width: '100%', border: '1.5px solid var(--border)', borderRadius: 8, padding: '9px 11px', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} />
+                      {nameError && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 4 }}>{nameError}</div>}
+                    </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    <div><label style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 4 }}>Phone / WhatsApp</label><input ref={sfPhone} type="tel" placeholder="+91 XXXXX XXXXX" style={{ width: '100%', border: '1.5px solid var(--border)', borderRadius: 8, padding: '9px 11px', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} /></div>
+                    <div>
+                      <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 4 }}>Phone / WhatsApp</label>
+                      <input ref={sfPhone} type="tel" placeholder="+91 XXXXX XXXXX" style={{ width: '100%', border: '1.5px solid var(--border)', borderRadius: 8, padding: '9px 11px', fontSize: 13, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }} />
+                      {phoneError && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 4 }}>{phoneError}</div>}
+                    </div>
                     <div><label style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', display: 'block', marginBottom: 4 }}>Approx. Students</label>
                       <select ref={sfStudents} style={{ width: '100%', border: '1.5px solid var(--border)', borderRadius: 8, padding: '9px 11px', fontSize: 13, fontFamily: 'inherit', outline: 'none', background: '#fff', boxSizing: 'border-box' }}>
                         <option value="">Select range</option>
@@ -1042,16 +1093,18 @@ export default function HoverMethodPage() {
                   Full Name *
                 </label>
                 <input
+                  ref={payNameRef}
                   type="text"
                   placeholder="e.g. Riya Sharma"
                   value={payName}
-                  onChange={e => setPayName(e.target.value)}
+                  onChange={e => { setPayName(e.target.value); if (payNameError) setPayNameError(''); }}
                   style={{
-                    width: '100%', border: '1.5px solid var(--border)', borderRadius: 8,
+                    width: '100%', border: `1.5px solid ${payNameError ? '#dc2626' : 'var(--border)'}`, borderRadius: 8,
                     padding: '10px 12px', fontSize: 14, fontFamily: 'inherit',
                     outline: 'none', boxSizing: 'border-box'
                   }}
                 />
+                {payNameError && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 4 }}>{payNameError}</div>}
               </div>
 
               <div>
@@ -1062,16 +1115,18 @@ export default function HoverMethodPage() {
                   Email *
                 </label>
                 <input
+                  ref={payEmailRef}
                   type="email"
                   placeholder="e.g. riya@gmail.com"
                   value={payEmail}
-                  onChange={e => setPayEmail(e.target.value)}
+                  onChange={e => { setPayEmail(e.target.value); if (payEmailError) setPayEmailError(''); }}
                   style={{
-                    width: '100%', border: '1.5px solid var(--border)', borderRadius: 8,
+                    width: '100%', border: `1.5px solid ${payEmailError ? '#dc2626' : 'var(--border)'}`, borderRadius: 8,
                     padding: '10px 12px', fontSize: 14, fontFamily: 'inherit',
                     outline: 'none', boxSizing: 'border-box'
                   }}
                 />
+                {payEmailError && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 4 }}>{payEmailError}</div>}
               </div>
 
               <div>
@@ -1082,16 +1137,18 @@ export default function HoverMethodPage() {
                   Phone *
                 </label>
                 <input
+                  ref={payPhoneRef}
                   type="tel"
                   placeholder="+91 XXXXX XXXXX"
                   value={payPhone}
-                  onChange={e => setPayPhone(e.target.value)}
+                  onChange={e => { setPayPhone(e.target.value); if (payPhoneError) setPayPhoneError(''); }}
                   style={{
-                    width: '100%', border: '1.5px solid var(--border)', borderRadius: 8,
+                    width: '100%', border: `1.5px solid ${payPhoneError ? '#dc2626' : 'var(--border)'}`, borderRadius: 8,
                     padding: '10px 12px', fontSize: 14, fontFamily: 'inherit',
                     outline: 'none', boxSizing: 'border-box'
                   }}
                 />
+                {payPhoneError && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 4 }}>{payPhoneError}</div>}
               </div>
 
               <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
@@ -1106,12 +1163,45 @@ export default function HoverMethodPage() {
                 </button>
                 <button
                   onClick={() => {
-                    if (!payName.trim() || !payEmail.trim() || !payPhone.trim()) {
-                      alert('Please fill in all fields');
+                    setPayNameError('');
+                    setPayEmailError('');
+                    setPayPhoneError('');
+
+                    if (!payName.trim()) {
+                      setPayNameError('Full name is required');
+                      payNameRef.current?.focus();
                       return;
                     }
+
+                    if (!payEmail.trim()) {
+                      setPayEmailError('Email is required');
+                      payEmailRef.current?.focus();
+                      return;
+                    }
+
+                    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payEmail.trim());
+                    if (!emailValid) {
+                      setPayEmailError('Enter a valid email address');
+                      payEmailRef.current?.focus();
+                      return;
+                    }
+
+                    if (!payPhone.trim()) {
+                      setPayPhoneError('Phone number is required');
+                      payPhoneRef.current?.focus();
+                      return;
+                    }
+
+                    const phonePlain = payPhone.replace(/[^0-9]/g, '');
+                    const phoneValid = /^(?:91|0)?[6-9][0-9]{9}$/.test(phonePlain);
+                    if (!phoneValid) {
+                      setPayPhoneError('Enter a valid Indian phone number (10 digits, optionally +91/0).');
+                      payPhoneRef.current?.focus();
+                      return;
+                    }
+
                     setShowPayForm(false);
-                    pay(pendingPayment.amt, pendingPayment.desc, payName, payEmail, payPhone);
+                    pay(pendingPayment.amt, pendingPayment.desc, payName.trim(), payEmail.trim(), payPhone.trim());
                   }}
                   style={{
                     flex: 2, padding: '12px', borderRadius: 50, border: 'none',
